@@ -1,0 +1,105 @@
+//mpi program for 500 matrix
+
+#include <iostream> // for standard input and output operations
+#include <chrono>   // for time-related operations
+#include <mpi.h>    // (MPI) library for parallel computing
+#include <cstdlib> // For srand and rand
+#include <ctime>   // For time
+
+#define MATRIX_MAX_SIZE 500
+
+int main(int argc, char **argv) {
+    int process_id, num_processes;
+    int matrix_A[MATRIX_MAX_SIZE][MATRIX_MAX_SIZE], matrix_B[MATRIX_MAX_SIZE][MATRIX_MAX_SIZE], product[MATRIX_MAX_SIZE][MATRIX_MAX_SIZE];
+    int A_rows, A_columns, B_rows, B_columns;
+    int i, j, k;
+    int partial_sum = 0;
+
+    // Initialize MPI
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &process_id);
+    MPI_Comm_size(MPI_COMM_WORLD, &num_processes);
+
+    // Set random seed based on current time
+    srand(time(NULL));
+
+    // Process 0 generates random matrices
+    if (process_id == 0) {
+        // Generate random matrix sizes
+        A_rows = rand() % MATRIX_MAX_SIZE + 1;
+        A_columns = rand() % MATRIX_MAX_SIZE + 1;
+        B_rows = A_columns; 
+        B_columns = rand() % MATRIX_MAX_SIZE + 1;
+
+        // Display generated matrix sizes
+        std::cout << "Generated random matrix sizes:" << std::endl;
+        std::cout << "Matrix A: " << A_rows << "x" << A_columns << std::endl;
+        std::cout << "Matrix B: " << B_rows << "x" << B_columns << std::endl;
+
+        // Generate random elements for matrix A
+        for (i = 0; i < A_rows; i++) {
+            for (j = 0; j < A_columns; j++) {
+                matrix_A[i][j] = rand() % 10;
+            }
+        }
+
+        // Generate random elements for matrix B
+        for (i = 0; i < B_rows; i++) {
+            for (j = 0; j < B_columns; j++) {
+                matrix_B[i][j] = rand() % 10; 
+            }
+        }
+    }
+
+    // Broadcast matrix dimensions to all processes
+    MPI_Bcast(&A_rows, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&A_columns, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&B_rows, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&B_columns, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    // Scatter matrix A to all processes
+    int rows_per_process = A_rows / num_processes;
+    int rows_to_receive = rows_per_process * A_columns;
+    int A_partial[rows_to_receive];
+    MPI_Scatter(matrix_A, rows_to_receive, MPI_INT, A_partial, rows_to_receive, MPI_INT, 0, MPI_COMM_WORLD);
+
+    // Broadcast matrix B to all processes
+    MPI_Bcast(matrix_B, B_rows * B_columns, MPI_INT, 0, MPI_COMM_WORLD);
+
+    // Perform matrix multiplication
+    auto start_time = std::chrono::high_resolution_clock::now(); 
+    for (i = 0; i < rows_per_process; i++) {
+        for (j = 0; j < B_columns; j++) {
+            for (k = 0; k < B_rows; k++) {
+                partial_sum += A_partial[i * A_columns + k] * matrix_B[k][j];
+            }
+            product[i][j] = partial_sum;
+            partial_sum = 0;
+        }
+    }
+    auto end_time = std::chrono::high_resolution_clock::now(); 
+
+    // Gather results from all processes to rank 0
+    int result_partial[rows_to_receive];
+    MPI_Gather(product, rows_to_receive, MPI_INT, result_partial, rows_to_receive, MPI_INT, 0, MPI_COMM_WORLD);
+
+    // Display result in process 0
+    if (process_id == 0) {
+        std::cout << "Resultant matrix:" << std::endl;
+        for (i = 0; i < A_rows; i++) {
+            for (j = 0; j < B_columns; j++) {
+                std::cout << result_partial[i * B_columns + j] << " ";
+            }
+            std::cout << std::endl;
+        }
+
+        // Calculate and display execution time
+        std::chrono::nanoseconds execution_time = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time);
+        std::cout << "Matrix multiplication took " << execution_time.count() << " nanoseconds to execute." << std::endl;
+    }
+
+    // Finalize MPI
+    MPI_Finalize();
+
+    return 0;
+}
